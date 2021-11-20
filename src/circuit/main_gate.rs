@@ -108,6 +108,29 @@ pub trait MainGateInstructions<F: FieldExt> {
 
     fn assign_bit(&self, region: &mut Region<'_, F>, value: Option<F>, offset: &mut usize) -> Result<AssignedBit<F>, Error>;
 
+    fn cond_or(
+        &self,
+        region: &mut Region<'_, F>,
+        c1: &AssignedCondition<F>,
+        c2: &AssignedCondition<F>,
+        offset: &mut usize,
+    ) -> Result<AssignedCondition<F>, Error>;
+
+    fn cond_and(
+        &self,
+        region: &mut Region<'_, F>,
+        c1: &AssignedCondition<F>,
+        c2: &AssignedCondition<F>,
+        offset: &mut usize,
+    ) -> Result<AssignedCondition<F>, Error>;
+
+    fn cond_not(
+        &self,
+        region: &mut Region<'_, F>,
+        c: &AssignedCondition<F>,
+        offset: &mut usize,
+    ) -> Result<AssignedCondition<F>, Error>;
+
     fn cond_select(
         &self,
         region: &mut Region<'_, F>,
@@ -518,6 +541,38 @@ impl<F: FieldExt> MainGateInstructions<F> for MainGate<F> {
         let (_, is_zero) = self.invert(region, a, offset)?;
         Ok(is_zero)
     }
+
+    fn cond_or(
+        &self,
+        region: &mut Region<'_, F>,
+        c1: &AssignedCondition<F>,
+        c2: &AssignedCondition<F>,
+        offset: &mut usize,
+    ) -> Result<AssignedCondition<F>, Error> {
+        unimplemented!();
+    }
+
+    fn cond_and(
+        &self,
+        region: &mut Region<'_, F>,
+        c1: &AssignedCondition<F>,
+        c2: &AssignedCondition<F>,
+        offset: &mut usize,
+    ) -> Result<AssignedCondition<F>, Error> {
+        unimplemented!();
+    }
+
+    fn cond_not(
+        &self,
+        region: &mut Region<'_, F>,
+        c: &AssignedCondition<F>,
+        offset: &mut usize,
+    ) -> Result<AssignedCondition<F>, Error> {
+        unimplemented!();
+    }
+
+
+
 
     fn cond_select(
         &self,
