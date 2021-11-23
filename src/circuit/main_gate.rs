@@ -549,7 +549,26 @@ impl<F: FieldExt> MainGateInstructions<F> for MainGate<F> {
         c2: &AssignedCondition<F>,
         offset: &mut usize,
     ) -> Result<AssignedCondition<F>, Error> {
-        unimplemented!();
+        let c = match (c1.value(), c2.value()) {
+            (Some(c1), Some(c2)) => Some(c1 + c2 - c1 * c2),
+            _ => None,
+        };
+
+        let (zero, one) = (F::zero(), F::one());
+
+        // c + c1 * c2 - c1 - c2 = 0
+        let (_, _, cell, _) = self.combine(
+            region,
+            Term::Assigned(c1, -F::one()),
+            Term::Assigned(c2, -F::one()),
+            Term::Unassigned(c, one),
+            Term::Zero,
+            zero,
+            offset,
+            CombinationOption::SingleLinerMul,
+        )?;
+
+        Ok(AssignedCondition::new(cell, c))
     }
 
     fn cond_and(
@@ -559,7 +578,25 @@ impl<F: FieldExt> MainGateInstructions<F> for MainGate<F> {
         c2: &AssignedCondition<F>,
         offset: &mut usize,
     ) -> Result<AssignedCondition<F>, Error> {
-        unimplemented!();
+        let c = match (c1.value(), c2.value()) {
+            (Some(c1), Some(c2)) => Some(c1 * c2),
+            _ => None,
+        };
+
+        let (zero, one) = (F::zero(), F::one());
+
+        let (_, _, cell, _) = self.combine(
+            region,
+            Term::assigned_to_mul(c1),
+            Term::assigned_to_mul(c2),
+            Term::Unassigned(c, -one),
+            Term::Zero,
+            zero,
+            offset,
+            CombinationOption::SingleLinerMul,
+        )?;
+
+        Ok(AssignedCondition::new(cell, c))
     }
 
     fn cond_not(
@@ -568,11 +605,26 @@ impl<F: FieldExt> MainGateInstructions<F> for MainGate<F> {
         c: &AssignedCondition<F>,
         offset: &mut usize,
     ) -> Result<AssignedCondition<F>, Error> {
-        unimplemented!();
+        let one = F::one();
+
+        let not_c = match c.value() {
+            Some(c) => Some(one - c),
+            _ => None,
+        };
+
+        let (_, _, cell, _) = self.combine(
+            region,
+            Term::assigned_to_add(c),
+            Term::unassigned_to_add(not_c),
+            Term::Zero,
+            Term::Zero,
+            one,
+            offset,
+            CombinationOption::SingleLinerAdd,
+        )?;
+
+        Ok(AssignedCondition::new(cell, not_c))
     }
-
-
-
 
     fn cond_select(
         &self,
