@@ -14,19 +14,19 @@ mod add;
 
 /* Emulate CurveAffine point undert field F */
 #[derive(Default, Clone, Debug)]
-pub struct Point<C: CurveAffine, F:FieldExt> {
+pub struct Point<C: CurveAffine, F: FieldExt> {
     x: Integer<F>,
     y: Integer<F>,
     _marker: PhantomData<C::Base>
 }
 
-impl<C: CurveAffine, F:FieldExt> Point<C, F> {
+impl<C: CurveAffine, F: FieldExt> Point<C, F> {
     fn new(x: Integer<F>, y: Integer<F>) -> Self {
         Point { x, y, _marker:PhantomData }
     }
 }
 
-pub struct AssignedPoint<C: CurveAffine, F:FieldExt > {
+pub struct AssignedPoint<C: CurveAffine, F: FieldExt > {
     x: AssignedInteger<F>,
     y: AssignedInteger<F>,
     // indicate whether the poinit is the identity point of curve or not
@@ -34,7 +34,7 @@ pub struct AssignedPoint<C: CurveAffine, F:FieldExt > {
     _marker: PhantomData<C::Base>
 }
 
-impl<C: CurveAffine, F:FieldExt> AssignedPoint<C, F> {
+impl<C: CurveAffine, F: FieldExt> AssignedPoint<C, F> {
     pub fn new(
         x:AssignedInteger<F>,
         y:AssignedInteger<F>,
@@ -48,7 +48,7 @@ impl<C: CurveAffine, F:FieldExt> AssignedPoint<C, F> {
 }
 
 /// Linear combination term
-pub enum Term<C: CurveAffine, F:FieldExt> {
+pub enum Term<C: CurveAffine, F: FieldExt> {
     Assigned(AssignedPoint<C, F>, F),
     Unassigned(Option<Point<C, F>>, F),
 }
@@ -56,7 +56,7 @@ pub enum Term<C: CurveAffine, F:FieldExt> {
 #[derive(Clone, Debug)]
 pub struct EccConfig {
     integer_chip_config: IntegerConfig,
-    integer_gate_config: MainGateConfig,
+    main_gate_config: MainGateConfig,
 }
 
 // we need template arg C to extract curve constants including a and b
@@ -104,9 +104,9 @@ impl<C: CurveAffine, F: FieldExt> EccChip<C, F> {
     }
 }
 
-pub trait EccInstruction<C: CurveAffine, F:FieldExt> {
+pub trait EccInstruction<C: CurveAffine, F: FieldExt> {
     fn assign_point(&self, region: &mut Region<'_, F>, point: Point<C,F>, offset: &mut usize) -> Result<AssignedPoint<C, F>, Error>;
-    fn assert_is_on_curve(&self, region: &mut Region<'_, F>, point: AssignedPoint<C, F>, offset: &mut usize) -> Result<(), Error>;
+    fn assert_is_on_curve(&self, region: &mut Region<'_, F>, point: &AssignedPoint<C, F>, offset: &mut usize) -> Result<(), Error>;
     fn assert_equal(
         &self,
         region: &mut Region<'_, F>,
@@ -115,22 +115,22 @@ pub trait EccInstruction<C: CurveAffine, F:FieldExt> {
         offset: &mut usize,
     ) -> Result<AssignedPoint<C,F>, Error>;
     fn add(&self, region: &mut Region<'_, F>, p0: &AssignedPoint<C,F>, p1: &AssignedPoint<C,F>, offset: &mut usize) -> Result<AssignedPoint<C,F>, Error>;
-    fn double(&self, region: &mut Region<'_, F>, p: AssignedPoint<C,F>, offset: &mut usize) -> Result<AssignedPoint<C,F>, Error>;
-    fn mul_var(&self, region: &mut Region<'_, F>, p: AssignedPoint<C,F>, e: F, offset: &mut usize) -> Result<AssignedPoint<C,F>, Error>;
+    fn double(&self, region: &mut Region<'_, F>, p: &AssignedPoint<C,F>, offset: &mut usize) -> Result<AssignedPoint<C,F>, Error>;
+    fn mul_var(&self, region: &mut Region<'_, F>, p: &AssignedPoint<C,F>, e: F, offset: &mut usize) -> Result<AssignedPoint<C,F>, Error>;
     fn mul_fix(&self, region: &mut Region<'_, F>, p: C, e: F, offset: &mut usize) -> Result<AssignedPoint<C,F>, Error>;
     fn multi_exp(&self, region: &mut Region<'_, F>, terms: Vec<Term<C, F>>, offset: &mut usize) -> Result<AssignedPoint<C,F>, Error>;
     fn combine(&self, region: &mut Region<'_, F>, terms: Vec<Term<C, F>>, u: F, offset: &mut usize) -> Result<AssignedPoint<C,F>, Error>;
 }
 
-impl<C: CurveAffine, F:FieldExt> EccInstruction<C, F> for EccChip<C, F> {
+impl<C: CurveAffine, F: FieldExt> EccInstruction<C, F> for EccChip<C, F> {
     fn assign_point(&self, region: &mut Region<'_, F>, point: Point<C,F>, offset: &mut usize) -> Result<AssignedPoint<C,F>, Error> {
         let x = self.integer_chip.assign_integer(region, Some(point.x.clone()), offset)?.clone();
         let y = self.integer_chip.assign_integer(region, Some(point.y.clone()), offset)?.clone();
-        let z = self.integer_gate().assign_bit(region, Some(F::zero()), offset)?.clone();
+        let z = self.main_gate().assign_bit(region, Some(F::zero()), offset)?.clone();
         Ok(AssignedPoint::new(x,y,z))
     }
 
-    fn assert_is_on_curve(&self, region: &mut Region<'_, F>, point: AssignedPoint<C,F>, offset: &mut usize) -> Result<(), Error> {
+    fn assert_is_on_curve(&self, region: &mut Region<'_, F>, point: &AssignedPoint<C,F>, offset: &mut usize) -> Result<(), Error> {
         unimplemented!();
     }
 
@@ -148,11 +148,11 @@ impl<C: CurveAffine, F:FieldExt> EccInstruction<C, F> for EccChip<C, F> {
         self._add(region, p0, p1, offset)
     }
 
-    fn double(&self, region: &mut Region<'_, F>, p: AssignedPoint<C,F>, offset: &mut usize) -> Result<AssignedPoint<C,F>, Error> {
+    fn double(&self, region: &mut Region<'_, F>, p: &AssignedPoint<C,F>, offset: &mut usize) -> Result<AssignedPoint<C,F>, Error> {
         unimplemented!();
     }
 
-    fn mul_var(&self, region: &mut Region<'_, F>, p: AssignedPoint<C,F>, e: F, offset: &mut usize) -> Result<AssignedPoint<C,F>, Error> {
+    fn mul_var(&self, region: &mut Region<'_, F>, p: &AssignedPoint<C,F>, e: F, offset: &mut usize) -> Result<AssignedPoint<C,F>, Error> {
         unimplemented!();
     }
 
@@ -169,9 +169,9 @@ impl<C: CurveAffine, F:FieldExt> EccInstruction<C, F> for EccChip<C, F> {
     }
 }
 
-impl<C: CurveAffine, F:FieldExt> EccChip<C, F> {
-    fn integer_gate(&self) -> MainGate<F> {
-        let main_gate_config = self.config.integer_gate_config.clone();
+impl<C: CurveAffine, F: FieldExt> EccChip<C, F> {
+    fn main_gate(&self) -> MainGate<F> {
+        let main_gate_config = self.config.main_gate_config.clone();
         MainGate::<F>::new(main_gate_config)
     }
 }
@@ -193,7 +193,7 @@ mod tests {
 
     #[derive(Clone, Debug)]
     struct TestCircuitConfig {
-        integer_gate_config: MainGateConfig,
+        main_gate_config: MainGateConfig,
         integer_chip_config: IntegerConfig,
         ecc_chip_config: EccConfig,
         range_config: RangeConfig,
@@ -222,18 +222,18 @@ mod tests {
         }
 
         fn configure(meta: &mut ConstraintSystem<N>) -> Self::Config {
-            let integer_gate_config = MainGate::<N>::configure(meta);
+            let main_gate_config = MainGate::<N>::configure(meta);
             let overflow_bit_lengths = TestCircuitConfig::overflow_bit_lengths();
-            let range_config = RangeChip::<N>::configure(meta, &integer_gate_config, overflow_bit_lengths);
-            let integer_chip_config = IntegerChip::<C::Base, N>::configure(meta, &range_config, &integer_gate_config);
+            let range_config = RangeChip::<N>::configure(meta, &main_gate_config, overflow_bit_lengths);
+            let integer_chip_config = IntegerChip::<C::Base, N>::configure(meta, &range_config, &main_gate_config);
             let ecc_chip_config = EccConfig {
-                integer_gate_config: integer_gate_config.clone(),
+                main_gate_config: main_gate_config.clone(),
                 integer_chip_config: integer_chip_config.clone()
             };
             TestCircuitConfig {
                 range_config,
                 integer_chip_config,
-                integer_gate_config,
+                main_gate_config,
                 ecc_chip_config,
             }
         }
