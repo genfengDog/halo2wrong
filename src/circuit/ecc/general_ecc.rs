@@ -48,7 +48,7 @@ pub trait GeneralEccInstruction<Emulated: CurveAffine, N: FieldExt> {
         offset: &mut usize,
     ) -> Result<AssignedPoint<N>, Error>;
 
-    fn double(&self, region: &mut Region<'_, N>, p: AssignedPoint<N>, offset: &mut usize) -> Result<AssignedPoint<N>, Error>;
+    fn double(&self, region: &mut Region<'_, N>, p: &AssignedPoint<N>, offset: &mut usize) -> Result<AssignedPoint<N>, Error>;
 
     fn negate(&self, region: &mut Region<'_, N>, p: &AssignedPoint<N>, offset: &mut usize) -> Result<AssignedPoint<N>, Error>;
 
@@ -208,8 +208,8 @@ impl<Emulated: CurveAffine, N: FieldExt> GeneralEccInstruction<Emulated, N> for 
         self._add(region, p0, p1, offset)
     }
 
-    fn double(&self, region: &mut Region<'_, N>, p: AssignedPoint<N>, offset: &mut usize) -> Result<AssignedPoint<N>, Error> {
-        unimplemented!();
+    fn double(&self, region: &mut Region<'_, N>, p: &AssignedPoint<N>, offset: &mut usize) -> Result<AssignedPoint<N>, Error> {
+        self._add(region, p, p, offset)
     }
 
     fn negate(&self, region: &mut Region<'_, N>, p: &AssignedPoint<N>, offset: &mut usize) -> Result<AssignedPoint<N>, Error> {
