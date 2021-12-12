@@ -409,4 +409,133 @@ mod tests {
     fn test_ecc_add_circuit_zero_left () {
       test_ecc_add_circuit(None, Some(3), Some(3));
     }
+
+    #[derive(Default, Clone, Debug)]
+    struct TestEccScalarMul<C: CurveAffine, N: FieldExt> {
+        x: Option<C>,
+        y: Option<C>,
+        s: N,
+        rns_base: Rns<C::Base, N>,
+        rns_scalar: Rns<C::ScalarExt, N>,
+    }
+    use crate::circuit::{AssignedCondition, AssignedInteger, AssignedValue, UnassignedValue};
+    use crate::rns::{fe_to_big, big_to_fe};
+    impl<C: CurveAffine, N: FieldExt> Circuit<N> for TestEccScalarMul<C, N> {
+        type Config = TestCircuitConfig;
+        type FloorPlanner = SimpleFloorPlanner;
+
+        fn without_witnesses(&self) -> Self {
+            Self::default()
+        }
+
+        fn configure(meta: &mut ConstraintSystem<N>) -> Self::Config {
+            let main_gate_config = MainGate::<N>::configure(meta);
+            let overflow_bit_lengths = TestCircuitConfig::overflow_bit_lengths();
+            let range_config = RangeChip::<N>::configure(meta, &main_gate_config, overflow_bit_lengths);
+            let integer_chip_config = IntegerChip::<C::Base, N>::configure(meta, &range_config, &main_gate_config);
+            let ecc_chip_config = EccConfig {
+                main_gate_config: main_gate_config.clone(),
+                integer_chip_config: integer_chip_config.clone()
+            };
+            TestCircuitConfig {
+                range_config,
+                integer_chip_config,
+                main_gate_config,
+                ecc_chip_config,
+            }
+        }
+
+        fn synthesize(&self, config: Self::Config, mut layouter: impl Layouter<N>) -> Result<(), Error> {
+            let ecc_chip = GeneralEccChip::<C, N>::new(
+                config.ecc_chip_config,
+                self.rns_base.clone(),
+                self.rns_scalar.clone()
+            )?;
+            let offset = &mut 0;
+            let main_gate = ecc_chip.main_gate();
+            let scalar_field_chip = ecc_chip.scalar_field_chip();
+            let base_chip = ecc_chip.base_field_chip();
+            layouter.assign_region(
+                || "region 0",
+                |mut region| {
+                    let z = self.rns_base.new_from_big(0u32.into());
+                    let z = base_chip.assign_integer(&mut region, Some(z), offset)?;
+                    let c = main_gate.assign_bit(&mut region, Some(N::one()), offset)?;
+                    let identity = AssignedPoint::new(z.clone(), z, c);
+                    let px = match &self.x {
+                        Some(x) => ecc_chip.assign_point(&mut region, x.clone(), offset)?,
+                        None => identity.clone(),
+                    };
+                    let py = match &self.y {
+                        Some(y) => ecc_chip.assign_point(&mut region, y.clone(), offset)?,
+                        None => identity.clone(),
+                    };
+
+                    let scalar = self.rns_base.new_from_big(fe_to_big(self.s));
+                    // FIXME: let scalar: AssignedInteger<<C as CurveAffine>::ScalarExt> = scalar_field_chip.assign_integer(&mut region, Some(scalar), offset)?;
+                    let scalar: AssignedInteger<N> = scalar_field_chip.assign_integer(&mut region, Some(scalar), offset)?;
+                    let r = ecc_chip.mul_var(&mut region, px.clone(), scalar, offset)?;
+                    ecc_chip.assert_equal(&mut region, &r, &py, offset)?;
+                    Ok(())
+                },
+            )?;
+
+            let range_chip = RangeChip::<N>::new(config.range_config, self.rns_base.bit_len_lookup);
+            #[cfg(not(feature = "no_lookup"))]
+            range_chip.load_limb_range_table(&mut layouter)?;
+            #[cfg(not(feature = "no_lookup"))]
+            range_chip.load_overflow_range_tables(&mut layouter)?;
+
+            Ok(())
+        }
+    }
+
+    fn test_ecc_scalar_mul_circuit(a:Option<u64>, b:Option<u64>, s:u64) {
+        let bit_len_limb = 64;
+
+        let rns_base = Rns::<<C as CurveAffine>::Base, Native>::construct(bit_len_limb);
+        let rns_scalar = Rns::<<C as CurveAffine>::ScalarExt, Native>::construct(bit_len_limb);
+
+        let k: u32 = 20;
+
+        let x = create_point(a);
+        let y = create_point(b);
+        let s = Native::from_u64(s);
+
+        let circuit = TestEccScalarMul::<C, Native> {
+            x: x,
+            y: y,
+            s: s,
+            rns_base: rns_base.clone(),
+            rns_scalar: rns_scalar.clone(),
+        };
+
+        let prover = match MockProver::run(k, &circuit, vec![]) {
+            Ok(prover) => prover,
+            Err(e) => panic!("{:#?}", e),
+        };
+
+        assert_eq!(prover.verify(), Ok(()));
+    }
+
+    #[test]
+    fn test_ecc_scalar_mul_zero_identity () {
+        test_ecc_scalar_mul_circuit(Some(2), None, 0);
+    }
+
+    #[test]
+    fn test_ecc_scalar_mul_1_identity () {
+        test_ecc_scalar_mul_circuit(Some(2), Some(2), 1);
+    }
+
+    #[test]
+    fn test_ecc_scalar_mul_2_identity () {
+        test_ecc_scalar_mul_circuit(Some(2), Some(4), 2);
+    }
+
+    #[test]
+    fn test_ecc_scalar_mul_3_identity () {
+        test_ecc_scalar_mul_circuit(Some(2), Some(6), 3);
+    }
+
 }
