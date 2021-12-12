@@ -56,7 +56,8 @@ pub trait GeneralEccInstruction<Emulated: CurveAffine, N: FieldExt> {
         &self,
         region: &mut Region<'_, N>,
         p: AssignedPoint<N>,
-        e: AssignedInteger<Emulated::ScalarExt>,
+        // FIXME: e: AssignedInteger<Emulated::ScalarExt>,
+        e: AssignedInteger<N>,
         offset: &mut usize,
     ) -> Result<AssignedPoint<N>, Error>;
 
@@ -77,6 +78,7 @@ pub struct GeneralEccChip<Emulated: CurveAffine, F: FieldExt> {
 
 // Ecc operation mods
 mod add;
+mod mul;
 
 impl<Emulated: CurveAffine, N: FieldExt> GeneralEccChip<Emulated, N> {
     pub (super) fn new(
@@ -224,10 +226,11 @@ impl<Emulated: CurveAffine, N: FieldExt> GeneralEccInstruction<Emulated, N> for 
         &self,
         region: &mut Region<'_, N>,
         p: AssignedPoint<N>,
-        e: AssignedInteger<Emulated::ScalarExt>,
+        // FIXME: e: AssignedInteger<Emulated::ScalarExt>,
+        e: AssignedInteger<N>,
         offset: &mut usize,
     ) -> Result<AssignedPoint<N>, Error> {
-        unimplemented!();
+        self._mul_var(region, p, e, offset)
     }
 
     fn mul_fix(
