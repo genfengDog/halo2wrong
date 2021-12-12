@@ -50,6 +50,8 @@ pub trait GeneralEccInstruction<Emulated: CurveAffine, N: FieldExt> {
 
     fn double(&self, region: &mut Region<'_, N>, p: AssignedPoint<N>, offset: &mut usize) -> Result<AssignedPoint<N>, Error>;
 
+    fn negate(&self, region: &mut Region<'_, N>, p: &AssignedPoint<N>, offset: &mut usize) -> Result<AssignedPoint<N>, Error>;
+
     fn mul_var(
         &self,
         region: &mut Region<'_, N>,
@@ -208,6 +210,14 @@ impl<Emulated: CurveAffine, N: FieldExt> GeneralEccInstruction<Emulated, N> for 
 
     fn double(&self, region: &mut Region<'_, N>, p: AssignedPoint<N>, offset: &mut usize) -> Result<AssignedPoint<N>, Error> {
         unimplemented!();
+    }
+
+    fn negate(&self, region: &mut Region<'_, N>, p: &AssignedPoint<N>, offset: &mut usize) -> Result<AssignedPoint<N>, Error> {
+        use crate::rns::{fe_to_big};
+        use num_bigint::BigUint as big_uint;
+        let main_gate = self.main_gate();
+        let integer_chip = self.base_field_chip();
+        Ok(AssignedPoint::new(p.x.clone(), p.y.clone(), p.z.clone()))
     }
 
     fn mul_var(
