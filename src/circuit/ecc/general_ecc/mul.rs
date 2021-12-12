@@ -1,168 +1,162 @@
 use super::AssignedPoint;
 use crate::circuit::ecc::general_ecc::{GeneralEccChip, GeneralEccInstruction};
-use crate::circuit::integer::{IntegerChip, IntegerInstructions};
-use crate::circuit::main_gate::{CombinationOption, MainGateColumn, MainGateInstructions, Term};
-use crate::circuit::{Assigned, AssignedCondition, AssignedInteger, AssignedValue, UnassignedValue};
+use crate::circuit::main_gate::{CombinationOption, MainGateInstructions, Term};
+use crate::circuit::{Assigned, AssignedBit, AssignedCondition, AssignedInteger};
 use crate::rns::{big_to_fe, fe_to_big};
 use crate::{BIT_LEN_LIMB, NUMBER_OF_LIMBS};
 use halo2::arithmetic::{CurveAffine, FieldExt};
 use halo2::circuit::Region;
 use halo2::plonk::Error;
 use num_bigint::BigUint as big_uint;
+use num_integer::Integer;
 
 struct ScalarTuple<F: FieldExt> {
-    h: AssignedValue<F>,
-    l: AssignedValue<F>,
-}
-
-struct BitHelper<F: FieldExt> {
-    bits: ScalarTuple<F>,
-    carry: AssignedValue<F>,
+    h: AssignedCondition<F>,
+    l: AssignedCondition<F>,
 }
 
 impl<Emulated: CurveAffine, F: FieldExt> GeneralEccChip<Emulated, F> {
     fn decompose(
         &self,
         region: &mut Region<'_, F>,
-        // FIXME: input: AssignedInteger<Emulated::ScalarExt>,
         input: AssignedInteger<F>,
         offset: &mut usize,
-    ) -> Result<Vec<ScalarTuple<F>>, Error> {
-        let zero = big_uint::from(0 as u64);
-        let one = big_uint::from(1 as u64);
-        let two = big_uint::from(2 as u64);
-        let four = big_uint::from(4 as u64);
+    ) -> Result<(AssignedCondition<F>, Vec<ScalarTuple<F>>), Error> {
+        // Algorithm's limitation.
+        assert!(BIT_LEN_LIMB % 2 == 0);
 
+        let zero = F::zero();
+        let one = F::one();
+        let two = F::from(2u64);
+        let four = F::from(4u64);
         let main_gate = self.main_gate();
+
         let mut res = Vec::with_capacity(NUMBER_OF_LIMBS * BIT_LEN_LIMB / 2);
-        let mut d = zero.clone();
-        let mut carry_bits = [zero.clone(), zero.clone(), zero.clone(), zero.clone()];
+        let mut limb_carry_bits = vec![];
 
-        // check that x == 0 or x == 1
-        let range_check = |region: &mut Region<'_, F>, assigned: AssignedValue<F>, offset: &mut usize| -> Result<(), Error> {
-            main_gate.assert_bit(region, assigned, offset)?;
-            Ok(())
-        };
+        // For each two bits,
+        // b00: 0
+        // b01: 1
+        // b10: 2
+        // b11: -1
+        //
+        // d_next * 4 + lb + lh * 2 - lb * lh * 4 = d_curr
+        //
+        // Witness layout:
+        // | A   | B   | C     | D  |
+        // | --- | --- | ----- | -- |
+        // | lb0 | hb0 | limb0 | 0  |
+        // | lb1 | hb1 | 0     | d1 |
+        // | lb2 | hb2 | 0     | d2 |
+        // ...
+        //
+        // On next limb
+        // | lb0' | hb0' | limb1 | d0' |
+        // | lb1' | hb1' | 0     | d1' |
+        // | lb2' | hb2' | 0     | d2' |
+        // ...
+        //
+        // At last
+        // | lbn | hbn | 0 | dn |
+        // | 0   | 0   | 0 | d  |
 
+        let mut rem = big_uint::from(0u64);
         for idx in 0..NUMBER_OF_LIMBS {
-            d = d + match input.limb(idx).value() {
-                Some(v) => fe_to_big(v),
-                _ => zero.clone(),
+            let last_limb_rem = rem.clone();
+            rem = match input.limb(idx).value() {
+                Some(v) => rem + fe_to_big(v),
+                _ => rem,
             };
 
-            for _ in 0..(BIT_LEN_LIMB / 2) {
-                let current = Term::Unassigned(Some(big_to_fe(d.clone())), -F::from_u64(1));
-                let mut a = zero.clone();
-                let mut b = zero.clone();
-                let mut carry = zero.clone();
+            for i in 0..(BIT_LEN_LIMB / 2) {
+                let shift = |rem: big_uint, carry| {
+                    if rem.is_odd() {
+                        (rem >> 1, one.clone(), carry)
+                    } else {
+                        (rem >> 1, zero.clone(), 0u64)
+                    }
+                };
 
-                if d > zero {
-                    let rem = &d % &four;
-                    a = ((&rem) & (&two)) >> 1;
-                    b = (&rem) & (&one);
-                    carry = (&a) & (&b);
-                    d = d - &rem + &four * &carry;
-                    d = d / &four;
-                }
+                let d = if i == 0 { big_to_fe(last_limb_rem.clone()) } else { big_to_fe(rem.clone()) };
+                let carry = 1u64;
+                let (rem_shifted, a, carry) = shift(rem, carry);
+                let (rem_shifted, b, carry) = shift(rem_shifted, carry);
+                rem = rem_shifted + carry;
 
-                let a_f = big_to_fe(a);
-                let b_f = big_to_fe(b);
-                let carry_f = big_to_fe(carry);
-
-                // 2a+b-4carry+4d_next = d
-                let (cell_a, cell_b, cell_c, _) = main_gate.combine(
+                let (cell_a, cell_b, _, cell_d) = main_gate.combine(
                     region,
-                    Term::Unassigned(Some(a_f), F::from_u64(2)),
-                    Term::Unassigned(Some(b_f), F::from_u64(1)),
-                    Term::Unassigned(Some(carry_f), -F::from_u64(4)),
-                    current,
-                    F::zero(),
+                    Term::Unassigned(Some(a), one),
+                    Term::Unassigned(Some(b), two),
+                    if i == 0 { Term::Assigned(&input.limbs[idx], -one) } else { Term::Zero },
+                    Term::Unassigned(Some(d), -one),
+                    zero,
                     offset,
-                    CombinationOption::CombineToNextAdd(F::from_u64(4)),
+                    CombinationOption::CombineToNextMulN(four, -four),
                 )?;
 
-                res.push(BitHelper {
-                    bits: ScalarTuple {
-                        h: AssignedValue::new(cell_a, Some(a_f)),
-                        l: AssignedValue::new(cell_b, Some(b_f)),
-                    },
-                    carry: AssignedValue::new(cell_c, Some(carry_f)),
-                })
-            }
+                res.push(ScalarTuple {
+                    h: AssignedCondition::new(cell_b, Some(b)),
+                    l: AssignedCondition::new(cell_a, Some(a)),
+                });
 
-            carry_bits[idx] = d.clone();
+                if idx != 0 && i == 0 {
+                    limb_carry_bits.push(AssignedCondition::new(cell_d, Some(d)));
+                };
+            }
         }
 
-        for idx in 0..NUMBER_OF_LIMBS {
-            let assigned = main_gate.assign_value(
-                region,
-                &UnassignedValue::new(Some(big_to_fe(carry_bits[idx].clone()))),
-                MainGateColumn::A,
-                offset,
-            )?;
-            main_gate.assert_bit(region, assigned, offset)?;
+        let d = big_to_fe(rem);
+        let (_, _, _, cell_d) = main_gate.combine(
+            region,
+            Term::Zero,
+            Term::Zero,
+            Term::Zero,
+            Term::Unassigned(Some(d), zero),
+            zero,
+            offset,
+            CombinationOption::SingleLinerAdd,
+        )?;
+
+        let rem = AssignedCondition::new(cell_d, Some(d));
+        limb_carry_bits.push(rem.clone());
+
+        for limb_carry_bit in limb_carry_bits.iter() {
+            main_gate.assert_bit(region, limb_carry_bit.clone(), offset)?;
         }
 
         for x in res.iter() {
-            range_check(region, x.bits.h.clone(), offset)?;
-            range_check(region, x.bits.l.clone(), offset)?;
-
-            // a==1 & b==1 <=> carry == 1
-            main_gate.combine(
-                region,
-                Term::Assigned(&x.bits.h, F::zero()),
-                Term::Assigned(&x.bits.l, F::zero()),
-                Term::Assigned(&x.carry, -F::one()),
-                Term::Zero,
-                F::zero(),
-                offset,
-                CombinationOption::SingleLinerMul,
-            )?;
+            main_gate.assert_bit(region, x.h.clone(), offset)?;
+            main_gate.assert_bit(region, x.l.clone(), offset)?;
         }
 
-        Ok(res.into_iter().map(|kv| kv.bits).collect())
-    }
-
-    pub fn create_identity_point(&self, region: &mut Region<'_, F>, offset: &mut usize) -> Result<AssignedPoint<F>, Error> {
-        let main_gate = self.main_gate();
-        let base_chip = self.base_field_chip();
-
-        let z = base_chip.rns.new_from_big(0u32.into());
-        let z = base_chip.assign_integer(region, Some(z), offset)?;
-        let c = main_gate.assign_bit(region, Some(F::one()), offset)?;
-        Ok(AssignedPoint::new(z.clone(), z, c))
+        Ok((rem, res))
     }
 
     pub(crate) fn _mul_var(
         &self,
         region: &mut Region<'_, F>,
         p: AssignedPoint<F>,
-        // FIXME: e: AssignedInteger<Emulated::ScalarExt>,
         e: AssignedInteger<F>,
         offset: &mut usize,
     ) -> Result<AssignedPoint<F>, Error> {
-        let main_gate = self.main_gate();
-
-        let p_neg = self.negate(region, &p, offset)?;
+        let p_neg = self.neg(region, &p, offset)?;
         let p_double = self.double(region, &p, offset)?;
-        let selector = self.decompose(region, e, offset)?;
-
-        let mut point = self.create_identity_point(region, offset)?;
+        let (rem, selector) = self.decompose(region, e, offset)?;
+        let mut acc = self.select_or_assign(region, &rem, &p, Emulated::identity(), offset)?;
 
         for di in selector.iter().rev() {
-            let a_is_zero = main_gate.is_zero(region, di.h.clone(), offset)?;
-            let b_is_zero = main_gate.is_zero(region, di.l.clone(), offset)?;
-            let b_is_not_zero = main_gate.cond_not(region, &b_is_zero, offset)?;
-            let b1 = self.select_or_assign(region, &b_is_not_zero, &p, Emulated::identity(), offset)?;
-            let b2 = self.select(region, &b_is_zero, &p_double, &p_neg, offset)?;
-            let a = self.select(region, &a_is_zero, &b1, &b2, offset)?;
+            // 0b01 - p, 0b00 - identity
+            let b0 = self.select_or_assign(region, &di.l, &p, Emulated::identity(), offset)?;
+            // 0b11 - p_neg, 0b10 - p_double
+            let b1 = self.select(region, &di.l, &p_neg, &p_double, offset)?;
+            let a = self.select(region, &di.h, &b1, &b0, offset)?;
 
             // each iter handles 2bits
-            point = self.double(region, &point, offset)?;
-            point = self.double(region, &point, offset)?;
-            point = self.add(region, &point, &a, offset)?;
+            acc = self.double(region, &acc, offset)?;
+            acc = self.double(region, &acc, offset)?;
+            acc = self.add(region, &acc, &a, offset)?;
         }
 
-        Ok(point)
+        Ok(acc)
     }
 }
