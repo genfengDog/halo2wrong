@@ -7,6 +7,8 @@ use num_bigint::BigUint as big_uint;
 
 mod ecc;
 mod integer;
+mod multiopen;
+mod plonk;
 
 pub(crate) use integer::IntegerInstructions;
 

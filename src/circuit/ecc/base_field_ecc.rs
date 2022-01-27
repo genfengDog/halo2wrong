@@ -52,8 +52,8 @@ pub trait BaseFieldEccInstruction<C: CurveAffine> {
     fn mul_var(
         &self,
         region: &mut Region<'_, C::ScalarExt>,
-        p: AssignedPoint<C::ScalarExt>,
-        e: AssignedValue<C::ScalarExt>,
+        p: &AssignedPoint<C::ScalarExt>,
+        e: &AssignedValue<C::ScalarExt>,
         offset: &mut usize,
     ) -> Result<AssignedPoint<C::ScalarExt>, Error>;
 
@@ -220,8 +220,8 @@ impl<C: CurveAffine> BaseFieldEccInstruction<C> for BaseFieldEccChip<C> {
     fn mul_var(
         &self,
         region: &mut Region<'_, C::ScalarExt>,
-        p: AssignedPoint<C::ScalarExt>,
-        e: AssignedValue<C::ScalarExt>,
+        p: &AssignedPoint<C::ScalarExt>,
+        e: &AssignedValue<C::ScalarExt>,
         offset: &mut usize,
     ) -> Result<AssignedPoint<C::ScalarExt>, Error> {
         unimplemented!();
