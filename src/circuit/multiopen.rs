@@ -1,6 +1,6 @@
 use crate::WrongExt;
 use halo2::circuit::Region;
-use halo2::arithmetic::{CurveAffine, Field, FieldExt};
+use halo2::arithmetic::{CurveAffine, FieldExt};
 use halo2arith::main_gate::five::main_gate::{
     MainGate,
     CombinationOption,
