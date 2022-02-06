@@ -247,6 +247,88 @@ impl<C: CurveAffine> MSMAggregator<C> for MPC<'_, C> {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct CommitQuery<'a, C: CurveAffine> {
+    pub c: Option<&'a AssignedPoint<C::ScalarExt>>,
+    pub v: Option<&'a AssignedValue<C::ScalarExt>>,
+}
+
+pub enum SchemeItem<'a, C: CurveAffine> {
+    Poly((CommitQuery<'a, C>, bool)),
+    Scalar(AssignedValue<C::ScalarExt>),
+    Add(Vec<SchemeItem<'a, C>>),
+    Mul(Vec<SchemeItem<'a, C>>),
+}
+
+impl<C: CurveAffine> std::ops::Add for SchemeItem<'_, C> {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        match self {
+            SchemeItem::<C>::Add(mut ls) => {
+                ls.push(other);
+                SchemeItem::Add(ls)
+            },
+            _ => SchemeItem::<C>::Add(vec![self, other]),
+        }
+    }
+}
+
+impl<C: CurveAffine> std::ops::Mul for SchemeItem<'_, C> {
+    type Output = Self;
+    fn mul(self, other: Self) -> Self {
+        match self {
+            SchemeItem::<C>::Mul(mut ls) => {
+                ls.push(other);
+                SchemeItem::Mul(ls)
+            },
+            _ => SchemeItem::<C>::Mul(vec![self, other]),
+        }
+    }
+}
+
+impl<C: CurveAffine> SchemeItem<'_, C> {
+    fn eval(
+        &self,
+        mut c: AssignedPoint<C::ScalarExt>,
+        mut v: AssignedValue<C::ScalarExt>,
+    ) -> Result<(Option<AssignedPoint<C::ScalarExt>>, Option<AssignedValue<C::ScalarExt>>), Error> {
+        match self {
+            SchemeItem::Poly((cq, true)) => {
+                Ok((cq.c.map(|c| c.clone()), None))
+            },
+            SchemeItem::Poly((cq, false)) => {
+                Ok((None, cq.v.map(|c| c.clone())))
+            },
+
+            SchemeItem::Scalar(s) => {
+                Ok((None, Some (s.clone())))
+            },
+            _ => {
+                Err(Error::Synthesis)
+            }
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! commit {
+    ($x:expr) => {
+        SchemeItem::<C>::Poly(($x.clone(), true))
+    };
+}
+#[macro_export]
+macro_rules! eval {
+    ($x:expr) => {
+        SchemeItem::<C>::Poly(($x.clone(), false))
+    };
+}
+#[macro_export]
+macro_rules! scalar {
+    ($x:expr) => {
+        SchemeItem::<C>::Scalar($x.clone())
+    };
+}
+
 pub struct SinglePointCommitment<C: CurveAffine> {
     w: AssignedPoint<C::ScalarExt>,
     z: AssignedValue<C::ScalarExt>,

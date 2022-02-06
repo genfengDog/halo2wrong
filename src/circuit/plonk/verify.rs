@@ -1,4 +1,5 @@
-use super::super::multiopen::{EvalAggregator, MSMAggregator, MPC, MPE, SPC, SPE};
+use super::super::multiopen::{EvalAggregator, MSMAggregator, MPC, MPE, SPC, SPE, SchemeItem, CommitQuery};
+use super::super::super::{eval, commit, scalar};
 use crate::circuit::ecc::base_field_ecc::{BaseFieldEccChip, BaseFieldEccInstruction};
 use crate::circuit::ecc::AssignedPoint;
 use crate::WrongExt;
@@ -316,6 +317,55 @@ impl<C: CurveAffine> PlonkVerifierParams<'_, C> {
         }
 
         Ok(base)
+    }
+
+    fn evaluation_proof1(
+        &mut self,
+        main_gate: &MainGate<C::ScalarExt>,
+        region: &mut Region<'_, C::ScalarExt>,
+        offset: &mut usize,
+    ) -> Result<SchemeItem<C>, Error> {
+        let a = CommitQuery{c: Some(self.commits.a), v: Some(self.evals.a_xi)};
+        let b = CommitQuery{c: Some(self.commits.b), v: Some(self.evals.b_xi)};
+        let c = CommitQuery{c: Some(self.commits.c), v: Some(self.evals.c_xi)};
+        let qm = CommitQuery{c: Some(self.params.q_m), v: None};
+        let ql = CommitQuery{c: Some(self.params.q_l), v: None};
+        let qr = CommitQuery{c: Some(self.params.q_r), v: None};
+        let qo = CommitQuery{c: Some(self.params.q_o), v: None};
+        let qc = CommitQuery{c: Some(self.params.q_c), v: None};
+        let z = CommitQuery{c: Some(self.commits.z), v: None};
+        let zxi = CommitQuery{c: Some(self.commits.z), v: None};
+        let sigma1 = CommitQuery{c: None, v: Some(self.evals.sigma1_xi)};
+        let sigma2 = CommitQuery{c: None, v: Some(self.evals.sigma2_xi)};
+        let sigma3 = CommitQuery{c: Some(self.params.sigma3), v: None};
+        let tl = CommitQuery{c: Some(self.commits.tl), v: None};
+        let tm = CommitQuery{c: Some(self.commits.tm), v: None};
+        let th = CommitQuery{c: Some(self.commits.th), v: None};
+        let pi_xi = self.get_pi_xi(main_gate, region, offset)?;
+        let l1_xi = self.get_l1_xi(main_gate, region, offset)?;
+        let xi_n = self.get_xi_n(main_gate, region, offset)?;
+        let xi_2n = self.get_xi_2n(main_gate, region, offset)?;
+        let zh_xi = self.get_zh_xi(main_gate, region, offset)?;
+        let neg_one = main_gate.neg_with_constant(region, self.one, C::ScalarExt::zero(), offset)?;
+        Ok(eval!(a) * eval!(b) * commit!(qm) + eval!(a) * commit!(ql)
+            + eval!(b) * commit!(qr) + eval!(c) * commit!(qo) + scalar!(pi_xi) + commit!(qc)
+            + scalar!(self.alpha) * (
+                  (eval!(a) + (scalar!(self.beta) * scalar!(self.xi)) + scalar!(self.gamma))
+                * (eval!(b) + (scalar!(self.beta) * scalar!(self.xi)) + scalar!(self.gamma))
+                * (eval!(c) + (scalar!(self.beta) * scalar!(self.xi)) + scalar!(self.gamma))
+                * commit!(z)
+                + (eval!(a) + (scalar!(self.beta) * eval!(sigma1)) + scalar!(self.gamma))
+                * (eval!(b) + (scalar!(self.beta) * eval!(sigma2)) + scalar!(self.gamma))
+                * (eval!(c) + (scalar!(self.beta) * commit!(sigma3)) + scalar!(self.gamma))
+                * eval!(zxi)
+              )
+            + scalar!(self.alpha) * scalar!(self.alpha) * scalar!(l1_xi) * (commit!(z) + scalar!(neg_one))
+            + scalar!(zh_xi) * (
+                  commit!(tl)
+                + scalar!(xi_n) * commit!(tm)
+                + scalar!(xi_2n) * commit!(th)
+            )
+        )
     }
 
     fn get_r1(
