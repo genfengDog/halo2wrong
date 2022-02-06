@@ -13,6 +13,72 @@ use halo2arith::{
 use crate::circuit::ecc::{AssignedPoint};
 use crate::circuit::ecc::base_field_ecc::{BaseFieldEccInstruction, BaseFieldEccChip};
 
+trait ArrayOps<N: FieldExt, T> {
+    fn mul_array(
+        &self,
+        l: Vec<&T>,
+        region: &mut Region<'_, N>,
+        offset: &mut usize,
+    ) -> Result<T, Error>;
+    fn add_array(
+        &self,
+        l: Vec<&T>,
+        region: &mut Region<'_, N>,
+        offset: &mut usize,
+    ) -> Result<T, Error>;
+}
+
+impl<N:FieldExt> ArrayOps<N, AssignedValue<N>> for MainGate<N> {
+    fn mul_array(
+        &self,
+        l: Vec<&AssignedValue<N>>,
+        region: &mut Region<'_, N>,
+        offset: &mut usize,
+    ) -> Result<AssignedValue<N>, Error> {
+        let mut base = l[0].clone();
+        for _ in 1..l.len() {
+            base = self.mul(region, base, l[1].clone(), offset)?;
+        }
+        Ok(base)
+    }
+    fn add_array(
+        &self,
+        l: Vec<&AssignedValue<N>>,
+        region: &mut Region<'_, N>,
+        offset: &mut usize,
+    ) -> Result<AssignedValue<N>, Error> {
+        let mut base = l[0].clone();
+        for _ in 1..l.len() {
+            base = self.add(region, base, l[1].clone(), offset)?;
+        }
+        Ok(base)
+    }
+}
+
+impl<C:CurveAffine> ArrayOps<C::ScalarExt, AssignedPoint<C::ScalarExt>> for BaseFieldEccChip<C> {
+    fn mul_array(
+        &self,
+        _l: Vec<&AssignedPoint<C::ScalarExt>>,
+        _region: &mut Region<'_, C::ScalarExt>,
+        _offset: &mut usize,
+    ) -> Result<AssignedPoint<C::ScalarExt>, Error> {
+        Err(Error::Synthesis)
+    }
+    fn add_array(
+        &self,
+        l: Vec<&AssignedPoint<C::ScalarExt>>,
+        region: &mut Region<'_, C::ScalarExt>,
+        offset: &mut usize,
+    ) -> Result<AssignedPoint<C::ScalarExt>, Error> {
+        let mut base = l[0].clone();
+        for _ in 1..l.len() {
+            base = self.add(region, &base, &l[1].clone(), offset)?;
+        }
+        Ok(base)
+    }
+}
+
+
 trait Commitment<C: CurveAffine> {
    fn append_term (
         &self,
@@ -289,8 +355,10 @@ impl<C: CurveAffine> std::ops::Mul for SchemeItem<'_, C> {
 impl<C: CurveAffine> SchemeItem<'_, C> {
     fn eval(
         &self,
-        mut c: AssignedPoint<C::ScalarExt>,
-        mut v: AssignedValue<C::ScalarExt>,
+        main_gate: &MainGate<C::ScalarExt>,
+        ecc_gate: &BaseFieldEccChip<C>,
+        region: &mut Region<'_, C::ScalarExt>,
+        offset: &mut usize,
     ) -> Result<(Option<AssignedPoint<C::ScalarExt>>, Option<AssignedValue<C::ScalarExt>>), Error> {
         match self {
             SchemeItem::Poly((cq, true)) => {
@@ -303,8 +371,50 @@ impl<C: CurveAffine> SchemeItem<'_, C> {
             SchemeItem::Scalar(s) => {
                 Ok((None, Some (s.clone())))
             },
-            _ => {
-                Err(Error::Synthesis)
+            SchemeItem::Add(ls) => {
+                let mut cs = Vec::new();
+                let mut vs = Vec::new();
+                ls.iter().for_each(|val| {
+                    let (c, v) = val.eval(main_gate, ecc_gate, region, offset).unwrap();
+                    c.map(|c| cs.push(c));
+                    v.map(|v| vs.push(v));
+                });
+                let vs = vs.iter().collect::<Vec<_>>();
+                let v = match vs[..] {
+                    [] => None,
+                    _ => Some (main_gate.add_array(vs, region, offset)?)
+                };
+                let cs = cs.iter().collect::<Vec<_>>();
+                let c = match cs[..] {
+                    [] => None,
+                    _ => Some (ecc_gate.add_array(cs, region, offset)?)
+                };
+                Ok((c, v))
+            }
+            SchemeItem::Mul(ls) => {
+                let mut cs = Vec::new();
+                let mut vs = Vec::new();
+                ls.iter().for_each(|val| {
+                    let (c, v) = val.eval(main_gate, ecc_gate, region, offset).unwrap();
+                    c.map(|c| cs.push(c));
+                    v.map(|v| vs.push(v));
+                });
+                let vs = vs.iter().collect::<Vec<_>>();
+                let v = match vs[..] {
+                    [] => None,
+                    _ => Some (main_gate.mul_array(vs, region, offset)?)
+                };
+                let cs = cs.iter().collect::<Vec<_>>();
+                match cs[..] {
+                    [] => Ok((None, v)),
+                    [c] => {
+                        match v {
+                            None => Ok((Some(c.clone()), None)),
+                            Some(v) => Ok((Some(ecc_gate.mul_var(region, c, &v, offset)?), None))
+                        }
+                    },
+                    _ => Err(Error::Synthesis)
+                }
             }
         }
     }
@@ -329,16 +439,17 @@ macro_rules! scalar {
     };
 }
 
-pub struct SinglePointCommitment<C: CurveAffine> {
-    w: AssignedPoint<C::ScalarExt>,
-    z: AssignedValue<C::ScalarExt>,
-    f: AssignedPoint<C::ScalarExt>,
-    eval: AssignedValue<C::ScalarExt>,
+pub struct SingleOpeningProof<C: CurveAffine> {
+    pub w: AssignedPoint<C::ScalarExt>,
+    pub z: AssignedValue<C::ScalarExt>,
+    pub f: AssignedPoint<C::ScalarExt>,
+    pub eval: AssignedValue<C::ScalarExt>,
 }
 
 // (g^e + w_g, [1]) and (w_x, [x])
 pub struct MultiOpeningProof<C: CurveAffine> {
-    w_x: AssignedPoint<C::ScalarExt>,
-    w_g: AssignedPoint<C::ScalarExt>,
-    e: AssignedValue<C::ScalarExt>,
+    pub w_x: AssignedPoint<C::ScalarExt>,
+    pub w_g: AssignedPoint<C::ScalarExt>,
+    pub f: AssignedPoint<C::ScalarExt>,
+    pub e: AssignedValue<C::ScalarExt>,
 }

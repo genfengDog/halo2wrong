@@ -1,4 +1,15 @@
-use super::super::multiopen::{EvalAggregator, MSMAggregator, MPC, MPE, SPC, SPE, SchemeItem, CommitQuery};
+use super::super::multiopen::{
+    EvalAggregator,
+    MSMAggregator,
+    MPC,
+    MPE,
+    SPC,
+    SPE,
+    SchemeItem,
+    CommitQuery,
+    SingleOpeningProof,
+    MultiOpeningProof,
+};
 use super::super::super::{eval, commit, scalar};
 use crate::circuit::ecc::base_field_ecc::{BaseFieldEccChip, BaseFieldEccInstruction};
 use crate::circuit::ecc::AssignedPoint;
@@ -28,7 +39,9 @@ pub struct VerifyCommitments<'a, N: FieldExt> {
     tl: &'a AssignedPoint<N>,
     tm: &'a AssignedPoint<N>,
     th: &'a AssignedPoint<N>,
-    wz: &'a AssignedPoint<N>,
+    w_z: &'a AssignedPoint<N>,
+    w_zw: &'a AssignedPoint<N>,
+
 }
 
 pub struct VerifyEvals<'a, N: FieldExt> {
@@ -319,7 +332,7 @@ impl<C: CurveAffine> PlonkVerifierParams<'_, C> {
         Ok(base)
     }
 
-    fn evaluation_proof1(
+    fn get_r (
         &mut self,
         main_gate: &MainGate<C::ScalarExt>,
         region: &mut Region<'_, C::ScalarExt>,
@@ -368,6 +381,7 @@ impl<C: CurveAffine> PlonkVerifierParams<'_, C> {
         )
     }
 
+    /* This should be calculated from r1, r0 = get_r().eval()? */
     fn get_r1(
         &mut self,
         main_gate: &MainGate<C::ScalarExt>,
@@ -493,9 +507,22 @@ impl<C: CurveAffine> PlonkVerifierParams<'_, C> {
         MPC([&v0 as &dyn MSMAggregator<C>, &v1].to_vec(), self.u).aggregate(ecc_gate, region, self.one, offset)
     }
 
-    /*
-        fn get_wz (
-        )
-        fn get_wz
-    */
+    fn get_wx(
+        &mut self,
+        main_gate: &MainGate<C::ScalarExt>,
+        ecc_gate: &BaseFieldEccChip<C>,
+        ws: Vec<SingleOpeningProof<C>>,
+        region: &mut Region<'_, C::ScalarExt>,
+        offset: &mut usize,
+    ) -> Result<MultiOpeningProof<C>, Error> {
+        let e1 = self.get_e1(main_gate, region, offset)?;
+        let f1 = self.get_f1(main_gate, ecc_gate, region, offset)?;
+        let mut wxs = Vec::new();
+        ws.iter().for_each(|w| {
+            wxs.push(w.w.clone());
+        });
+        let wxs = SPC(wxs.iter().collect(), self.u).aggregate(ecc_gate, region, self.one, offset)?;
+        Ok(MultiOpeningProof{w_x: wxs.clone(), w_g: wxs, e: e1, f :f1})
+
+    }
 }
