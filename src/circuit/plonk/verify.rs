@@ -309,8 +309,8 @@ impl<C: CurveAffine> PlonkVerifierParams<'_, C> {
     ) -> Result<AssignedValue<C::ScalarExt>, Error> {
         let mut base = l[0].clone();
 
-        for _ in 1..l.len() {
-            base = main_gate.mul(region, base, l[1].clone(), offset)?;
+        for i in 1..l.len() {
+            base = main_gate.mul(region, base, l[i].clone(), offset)?;
         }
 
         Ok(base)
@@ -325,8 +325,8 @@ impl<C: CurveAffine> PlonkVerifierParams<'_, C> {
     ) -> Result<AssignedValue<C::ScalarExt>, Error> {
         let mut base = l[0].clone();
 
-        for _ in 1..l.len() {
-            base = main_gate.mul(region, base, l[1].clone(), offset)?;
+        for i in 1..l.len() {
+            base = main_gate.mul(region, base, l[i].clone(), offset)?;
         }
 
         Ok(base)

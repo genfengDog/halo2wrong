@@ -36,8 +36,8 @@ impl<N:FieldExt> ArrayOps<N, AssignedValue<N>> for MainGate<N> {
         offset: &mut usize,
     ) -> Result<AssignedValue<N>, Error> {
         let mut base = l[0].clone();
-        for _ in 1..l.len() {
-            base = self.mul(region, base, l[1].clone(), offset)?;
+        for i in 1..l.len() {
+            base = self.mul(region, base, l[i].clone(), offset)?;
         }
         Ok(base)
     }
@@ -48,8 +48,8 @@ impl<N:FieldExt> ArrayOps<N, AssignedValue<N>> for MainGate<N> {
         offset: &mut usize,
     ) -> Result<AssignedValue<N>, Error> {
         let mut base = l[0].clone();
-        for _ in 1..l.len() {
-            base = self.add(region, base, l[1].clone(), offset)?;
+        for i in 1..l.len() {
+            base = self.add(region, base, l[i].clone(), offset)?;
         }
         Ok(base)
     }
@@ -71,13 +71,12 @@ impl<C:CurveAffine> ArrayOps<C::ScalarExt, AssignedPoint<C::ScalarExt>> for Base
         offset: &mut usize,
     ) -> Result<AssignedPoint<C::ScalarExt>, Error> {
         let mut base = l[0].clone();
-        for _ in 1..l.len() {
-            base = self.add(region, &base, &l[1].clone(), offset)?;
+        for i in 1..l.len() {
+            base = self.add(region, &base, &l[i].clone(), offset)?;
         }
         Ok(base)
     }
 }
-
 
 trait Commitment<C: CurveAffine> {
    fn append_term (
@@ -149,20 +148,27 @@ impl<N: FieldExt> Eval<N> for AssignedValue<N> {
         offset: &mut usize
     ) -> Result<Self, Error> where Self: Sized {
         //a * b + d - sd_next*d_next = 0
-        let (_, _, _, _, e_next) = main_gate.combine(
+        let v = eval.value.and_then(|eval_v| {
+            scalar.value.and_then(|scalar_v| {
+                self.value.and_then(|self_v| {
+                    Some(eval_v * scalar_v + self_v)
+                })
+            })
+        });
+        let (_, _, _, res, _) = main_gate.combine(
             region,
             [
                 Term::Assigned(eval, N::zero()),
                 Term::Assigned(scalar, N::zero()),
+                Term::Assigned(self, N::one()),
+                Term::Unassigned(v, -N::one()),
                 Term::Zero,
-                Term::Zero,
-                Term::Assigned(self, N::zero()),
             ],
             N::zero(),
             offset,
-            CombinationOption::Common(CombinationOptionCommon::CombineToNextMul(N::one()))
+            CombinationOption::Common(CombinationOptionCommon::OneLinerMul)
         )?;
-        Ok(e_next)
+        Ok(res)
     }
     fn factor (
         &self,
@@ -212,7 +218,7 @@ impl<C: CurveAffine> EvalAggregator <C> for SPE<'_, C> {
                 let acc = eva.factor(main_gate, region, &v, offset).unwrap();
                 eva = acc.append_term(main_gate, region, val, one, offset).unwrap()
             });
-            Ok(eva.clone())
+            Ok(eva)
         } else {
             Err(Error::Synthesis)
         };
