@@ -325,6 +325,7 @@ pub struct CommitQuery<'a, C: CurveAffine> {
     pub v: Option<&'a AssignedValue<C::ScalarExt>>,
 }
 
+/*
 pub enum SchemeItem<'a, C: CurveAffine> {
     Poly((CommitQuery<'a, C>, bool)),
     Scalar(AssignedValue<C::ScalarExt>),
@@ -444,6 +445,7 @@ macro_rules! scalar {
         SchemeItem::<C>::Scalar($x.clone())
     };
 }
+*/
 
 pub struct SingleOpeningProof<C: CurveAffine> {
     pub w: AssignedPoint<C::ScalarExt>,
@@ -458,4 +460,159 @@ pub struct MultiOpeningProof<C: CurveAffine> {
     pub w_g: AssignedPoint<C::ScalarExt>,
     pub f: AssignedPoint<C::ScalarExt>,
     pub e: AssignedValue<C::ScalarExt>,
+}
+
+/****** new schema ******/
+#[derive(Clone, Debug)]
+pub enum ScalarItem<'a, C: CurveAffine> {
+    Unit(AssignedValue<C::ScalarExt>),
+    Eval(CommitQuery<'a, C>),
+    Add(Vec<ScalarItem<'a, C>>),
+    Mul(Vec<ScalarItem<'a, C>>)
+}
+
+
+impl<C: CurveAffine> ScalarItem<'_, C> {
+    fn eval(
+        &self,
+        main_gate: &MainGate<C::ScalarExt>,
+        region: &mut Region<'_, C::ScalarExt>,
+        offset: &mut usize,
+    ) -> Result<AssignedValue<C::ScalarExt>, Error> {
+        match self {
+            ScalarItem::Unit(v) => Ok(v.clone()),
+            ScalarItem::Eval(cq) => Ok(cq.v.unwrap().clone()),
+            ScalarItem::Add(ls) => {
+                let ls_res: Result<Vec<_>, _> = ls.iter().map(|e| e.eval(main_gate, region, offset)).collect();
+                let ls = ls_res?;
+                main_gate.add_array(ls.iter().collect(), region, offset)
+            },
+            ScalarItem::Mul(ls) => {
+                let ls_res: Result<Vec<_>, _> = ls.iter().map(|e| e.eval(main_gate, region, offset)).collect();
+                let ls = ls_res?;
+                main_gate.mul_array(ls.iter().collect(), region, offset)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum PointItem<'a, C: CurveAffine> {
+    Commit(CommitQuery<'a, C>, Option<ScalarItem<'a, C>>),
+    Add(Vec<PointItem<'a, C>>)
+}
+
+impl<C: CurveAffine> PointItem<'_, C> {
+    pub fn eval(
+        &self,
+        main_gate: &MainGate<C::ScalarExt>,
+        ecc_gate: &BaseFieldEccChip<C>,
+        region: &mut Region<'_, C::ScalarExt>,
+        offset: &mut usize,
+    ) -> Result<AssignedPoint<C::ScalarExt>, Error> {
+        match self {
+            PointItem::Commit(cq, scalar) => {
+                match scalar {
+                    Some(scalar) => {
+                        let scalar = scalar.eval(main_gate, region, offset)?;
+                        ecc_gate.mul_var(region, cq.c.unwrap(), &scalar, offset)
+                    },
+                    None => {
+                        Ok(cq.c.unwrap().clone())
+                    }
+                }
+            },
+            PointItem::Add(ls) => {
+                let ls: Result<Vec<_>, _> = ls.iter().map(|x| x.eval(main_gate, ecc_gate, region, offset)).collect();
+                let ls = ls?;
+                ecc_gate.add_array(ls.iter().collect(), region, offset)
+            },
+        }
+    }
+}
+
+impl<C: CurveAffine> std::ops::Add for ScalarItem<'_, C> {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        match self {
+            ScalarItem::<C>::Add(mut scalars) => {
+                scalars.push(other);
+                ScalarItem::Add(scalars)
+            },
+            _ => ScalarItem::<C>::Add(vec![self, other]),
+        }
+    }
+}
+
+impl<C: CurveAffine> std::ops::Mul for ScalarItem<'_, C> {
+    type Output = Self;
+    fn mul(self, other: Self) -> Self {
+        match self {
+            ScalarItem::<C>::Mul(mut scalars) => {
+                scalars.push(other);
+                ScalarItem::Mul(scalars)
+            },
+            _ => ScalarItem::<C>::Mul(vec![self, other]),
+        }
+    }
+}
+
+impl<C: CurveAffine> std::ops::Add for PointItem<'_, C> {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        match self {
+            PointItem::<C>::Add(mut points) => {
+                points.push(other);
+                PointItem::Add(points)
+            },
+            _ => PointItem::<C>::Add(vec![self, other]),
+        }
+    }
+}
+
+impl<'a, C: CurveAffine> std::ops::Mul<ScalarItem<'a, C>> for PointItem<'a, C> {
+    type Output = Self;
+    fn mul(self, other: ScalarItem::<'a, C>) -> Self {
+        match self {
+            PointItem::<C>::Commit(base, scalar) => {
+                let new_scalar = match scalar {
+                    Some(scalar) => Some(scalar * other),
+                    _ => Some(other)
+                };
+                PointItem::Commit(base, new_scalar)
+            },
+            PointItem::<C>::Add(points) => {
+                let new_points = points.into_iter().map(|x| { x * other.clone() }).collect();
+                PointItem::<C>::Add(new_points)
+            }
+        }
+    }
+}
+
+impl<'a, C: CurveAffine> std::ops::Mul<PointItem<'a, C>> for ScalarItem<'a, C> {
+    type Output = PointItem<'a, C>;
+    fn mul(self, other: PointItem::<'a, C>) -> PointItem<'a, C> {
+        other * self
+    }
+}
+
+#[macro_export]
+macro_rules! commit {
+    ($x:expr) => {
+        crate::circuit::multiopen::PointItem::<C>::Commit($x.clone(), None)
+    };
+}
+
+#[macro_export]
+macro_rules! eval {
+    ($x:expr) => {
+        crate::circuit::multiopen::ScalarItem::<C>::Eval($x.clone())
+    };
+}
+
+#[macro_export]
+macro_rules! scalar {
+    ($x:expr) => {
+        crate::circuit::multiopen::ScalarItem::<C>::Unit($x.clone())
+    };
 }
