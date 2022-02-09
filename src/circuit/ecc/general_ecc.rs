@@ -346,7 +346,7 @@ impl<Emulated: CurveAffine, N: FieldExt> GeneralEccInstruction<Emulated, N> for 
     }
 
     fn mul_var(&self, region: &mut Region<'_, N>, p: AssignedPoint<N>, e: AssignedInteger<N>, offset: &mut usize) -> Result<AssignedPoint<N>, Error> {
-        self._mul_var(region, p, e, offset)
+        self._mul_integer(region, &p, &e, offset)
     }
 
     #[allow(unused_variables)]
