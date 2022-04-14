@@ -22,13 +22,11 @@ optional = true
 
 [dependencies.halo2_kzg]
 package = "halo2_proofs"
-git = "https://github.com/appliedzkp/halo2.git"
-rev = "fea000f5ce1a573bd61368d7465a3caaff94cf92"
+git = "https://git@github.com/junyu0312/halo2"
+branch = "export_symbol"
 optional = true
 
 [features]
 default = ["zcash"]
 zcash = ["halo2_zcash"]
 kzg = ["halo2_kzg"]
-
-
